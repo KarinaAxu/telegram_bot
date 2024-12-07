@@ -4,3 +4,4 @@ djangorestframework-simplejwt
 gunicorn==23.0.0
 requests
 pillow
+python-telegram-bot==20.3

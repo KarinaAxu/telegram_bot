@@ -1,14 +1,15 @@
-{% extends 'blog/base.html' %}
+{% extends 'base.html' %}
 
 {% block content %}
     <div class="post">
         {% if post.created_date %}
             <div class="date">
-                {{ post.created_date }}
+                📅 {{ post.created_date }}
             </div>
         {% endif %}
         {% if user.is_authenticated %}
-             <a class="btn btn-default" href="{% url 'post_edit' pk=post.pk %}"><span class="glyphicon glyphicon-pencil"></span></a>
+            <a class="btn btn-default" href="{% url 'post_edit' pk=post.pk %}"><span class="glyphicon glyphicon-pencil"></span> Редактировать ✏️</a>
+            <a class="btn btn-danger" href="{% url 'post_delete' pk=post.pk %}">Удалить ❌</a>
         {% endif %}
         <h1>{{ post.title }}</h1>
         <p>{{ post.description|linebreaksbr }}</p>
