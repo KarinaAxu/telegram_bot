@@ -1,126 +1,152 @@
 import os
 import django
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from asgiref.sync import sync_to_async
+from django.contrib.auth import get_user_model
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tgbot.settings')
 django.setup()
 
 from tg.models import Post
 
-MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        ["📝 Посмотреть посты", "✨ Добавить пост"],
-        ["🔧 Изменить пост", "❌ Удалить пост"],
-        ["❓ Помощь"]
-    ],
-    resize_keyboard=True
-)
-
-# Обработчик команды /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Приветик! 🐾 Чем могу помочь? Выберите действие:",
-        reply_markup=MAIN_MENU_KEYBOARD
-    )
-
-# Обработчик просмотра постов
 @sync_to_async
-def get_post_list():
-    posts = Post.objects.all().order_by('-created_date')
-    if not posts:
-        return "Постов пока нет. Напишите что-нибудь красивое! 🌸"
-    return "\n".join([f"📌 {post.id}: {post.title} - {post.description[:50]}..." for post in posts])
+def create_post_in_db(title, description, author_id):
+    user = get_user_model().objects.get(telegram_id=author_id)
+    return Post.objects.create(title=title, description=description, author=user)
 
-async def list_posts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    post_list = await get_post_list()
-    await update.message.reply_text(post_list)
+@sync_to_async
+def check_user_exists(user_id):
+    return get_user_model().objects.filter(telegram_id=user_id).exists()
 
-# Создание поста
-async def add_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Ожидаем ввод заголовка и описания в одном сообщении
-    user_input = update.message.text.strip()
+@sync_to_async
+def create_user(user_id, username):
+    return get_user_model().objects.create(telegram_id=user_id, username=username)
 
-    if ',' not in user_input:
-        await update.message.reply_text(
-            "Неверный формат. Используйте: заголовок, описание 💔\nПример: Вечер, Какой красивый закат!"
-        )
-        return
+@sync_to_async
+def get_user_posts(user_id):
+    return list(Post.objects.filter(author_id=user_id).values("id", "title", "description"))
 
-    try:
-        title, description = map(str.strip, user_input.split(",", 1))
-        # Создаем пост в базе данных
-        await sync_to_async(Post.objects.create)(title=title, description=description)
-        await update.message.reply_text(f"Ура! Пост '{title}' добавлен! 🌟")
-    except Exception as e:
-        await update.message.reply_text("Что-то пошло не так. Попробуйте снова 🐾")
+@sync_to_async
+def delete_post(post_id):
+    return Post.objects.filter(id=post_id).delete()
 
-# Редактирование поста
-async def edit_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Ожидаем ввод ID, нового заголовка и описания
-    user_input = update.message.text.strip()
+@sync_to_async
+def get_post_by_id(post_id):
+    return Post.objects.filter(id=post_id).values("id", "title", "description").first()
 
-    if ',' not in user_input:
-        await update.message.reply_text(
-            "Неверный формат. Используйте: ID, заголовок, описание 💔\nПример: 1, Новый вечер, Новый красивый закат!"
-        )
-        return
-
-    try:
-        post_id, title, description = map(str.strip, user_input.split(",", 2))
-        post_id = int(post_id)
-        # Обновляем пост в базе данных
-        post = await sync_to_async(Post.objects.filter(id=post_id).update)(title=title, description=description)
-        if post:
-            await update.message.reply_text(f"Пост с ID {post_id} обновлен! 🌟")
-        else:
-            await update.message.reply_text("Пост с таким ID не найден. 💔")
-    except ValueError:
-        await update.message.reply_text("ID должен быть числом. 💔")
-    except Exception as e:
-        await update.message.reply_text("Что-то пошло не так. Попробуйте снова 🐾")
-
-# Удаление поста
-async def delete_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Ожидаем ввод ID поста для удаления
-    user_input = update.message.text.strip()
-
-    try:
-        post_id = int(user_input)
-        # Удаляем пост
-        post = await sync_to_async(Post.objects.filter(id=post_id).delete)()
-        if post:
-            await update.message.reply_text(f"Пост с ID {post_id} удален. 🗑️")
-        else:
-            await update.message.reply_text("Пост с таким ID не найден. 💔")
-    except ValueError:
-        await update.message.reply_text("ID должен быть числом. 💔")
-    except Exception as e:
-        await update.message.reply_text("Что-то пошло не так. Попробуйте снова 🐾")
-
-# Помощь
-async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    help_text = (
-        "Это бот для управления постами!\n\n"
-        "Вот что я могу:\n"
-        "📝 Посмотреть посты — покажу все текущие посты.\n"
-        "✨ Добавить пост — создайте новый пост, указав заголовок и описание.\n"
-        "🔧 Изменить пост — обновите пост, указав ID, новый заголовок и описание.\n"
-        "❌ Удалить пост — удалите пост по его ID.\n"
-        "❓ Помощь — покажу эту информацию."
+async def start(update: Update, context):
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or "солнышко"
+    if not await check_user_exists(user_id):
+        await create_user(user_id, username)
+        await update.message.reply_text(f"Добро пожаловать, {username}! 🌸 Ты теперь часть нашей команды!")
+    await update.message.reply_text(
+        "Привет-привет! 🐾 Я твой бот-помощник для управления постами. Вот мои команды:\n\n"
+        "✨ /start - Начать наше приключение\n"
+        "🌈 /help - Узнать мои умения\n"
+        "📋 /create - Создать новый пост\n"
+        "🖊️ /edit - Изменить пост\n"
+        "🗑️ /delete - Удалить пост\n"
+        "📑 /view - Просмотреть все свои посты\n\n"
+        "Давай творить магию вместе! ✨"
     )
-    await update.message.reply_text(help_text)
 
-# Создание и настройка бота
-app = ApplicationBuilder().token("7757445345:AAG6WyTfCrClWs2-xMUb4vkV-gRgMFJ_qQg").build()
+async def help_command(update: Update, context):
+    await update.message.reply_text(
+        "Я умею:\n"
+        "🌟 /create - Создавать новые посты\n"
+        "💡 /edit - Редактировать посты\n"
+        "🗑️ /delete - Удалять посты\n"
+        "📑 /view - Просматривать все свои посты\n\n"
+        "Если есть вопросы, просто зови меня! 🌷"
+    )
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.Text("📝 Посмотреть посты"), list_posts))
-app.add_handler(MessageHandler(filters.Text("✨ Добавить пост"), add_post))
-app.add_handler(MessageHandler(filters.Text("🔧 Изменить пост"), edit_post))
-app.add_handler(MessageHandler(filters.Text("❌ Удалить пост"), delete_post))
-app.add_handler(MessageHandler(filters.Text("❓ Помощь"), help))
+async def create_command(update: Update, context):
+    user_id = update.message.from_user.id
+    if not await check_user_exists(user_id):
+        await update.message.reply_text("Пользователь не найден. Зарегистрируйтесь через /start.")
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Пожалуйста, укажите название и описание через пробел: `/create Название Описание`")
+        return
+    title, description = context.args[0], " ".join(context.args[1:])
+    await create_post_in_db(title, description, user_id)
+    await update.message.reply_text(f"Пост '{title}' создан! 🎉")
+
+async def list_posts(update: Update, context):
+    user_id = update.message.from_user.id
+    posts = await get_user_posts(user_id)
+    if not posts:
+        await update.message.reply_text("У вас пока нет постов. Создайте первый с помощью команды /create!")
+        return
+    buttons = [
+        [InlineKeyboardButton(post["title"], callback_data=f"view_post_{post['id']}"),
+         InlineKeyboardButton("Редактировать", callback_data=f"edit_post_{post['id']}"),
+         InlineKeyboardButton("Удалить", callback_data=f"delete_post_{post['id']}")]
+        for post in posts
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Ваши посты:", reply_markup=markup)
+
+async def view_posts(update: Update, context):
+    user_id = update.message.from_user.id
+    posts = await get_user_posts(user_id)
+    if not posts:
+        await update.message.reply_text("У вас пока нет постов. Создайте первый с помощью команды /create!")
+        return
+    posts_text = "\n\n".join([f"📋 {post['title']}: {post['description']}" for post in posts])
+    await update.message.reply_text(f"Ваши посты:\n\n{posts_text}")
+
+async def handle_post_actions(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("view_post_"):
+        post_id = int(data.split("_")[2])
+        post = await get_post_by_id(post_id)
+        if post:
+            await query.message.reply_text(f"📋 Пост: {post['title']}\n\n{post['description']}")
+        else:
+            await query.message.reply_text("Пост не найден.")
+    elif data.startswith("edit_post_"):
+        post_id = int(data.split("_")[2])
+        post = await get_post_by_id(post_id)
+        if post:
+            await query.message.reply_text(f"Редактирование поста: {post['title']}\n\nОписание: {post['description']}\nВведите новое описание.")
+        else:
+            await query.message.reply_text("Пост не найден.")
+    elif data.startswith("delete_post_"):
+        post_id = int(data.split("_")[2])
+        await delete_post(post_id)
+        await query.message.reply_text("Пост удален. 🗑️")
+
+async def handle_edit(update: Update, context):
+    user_id = update.message.from_user.id
+    if len(context.args) < 2:
+        await update.message.reply_text("Пожалуйста, укажите ID поста и новый текст: `/edit ID новый текст`.")
+        return
+    post_id = int(context.args[0])
+    new_description = " ".join(context.args[1:])
+    post = await get_post_by_id(post_id)
+    if post:
+        post['description'] = new_description
+        Post.objects.filter(id=post_id).update(description=new_description)  # Обновляем описание в базе
+        await update.message.reply_text(f"Пост '{post['title']}' обновлен! 🌟")
+    else:
+        await update.message.reply_text("Пост не найден.")
+
+def main():
+    app = ApplicationBuilder().token("7757445345:AAG6WyTfCrClWs2-xMUb4vkV-gRgMFJ_qQg").build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("create", create_command))
+    app.add_handler(CommandHandler("list", list_posts))
+    app.add_handler(CommandHandler("view", view_posts))
+    app.add_handler(CallbackQueryHandler(handle_post_actions))
+    app.add_handler(CommandHandler("edit", handle_edit))
+    print("Бот запущен... 🐾")
+    app.run_polling()
 
 if __name__ == "__main__":
-    app.run_polling()
+    main()
